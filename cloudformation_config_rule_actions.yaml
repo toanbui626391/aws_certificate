@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create AWS Config Rule for S3 bucket encryption
+
+Parameters:
+  ConfigBucketName:
+    Type: String
+    Description: The name of the S3 bucket to store AWS Config data
+  
+  RoleName:
+    Type: String
+    Description: The IAM role used by AWS Config
+
+Resources:
+  # AWS Config Configuration Recorder
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/${RoleName}"
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  # AWS Config Delivery Channel to send data to S3 bucket
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties: 
+      S3BucketName: !Ref ConfigBucketName
+
+  # AWS Config Rule to check whether S3 buckets are encrypted
+  S3BucketEncryptionConfigRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: "s3-bucket-encrypted"
+      Description: "Ensure all S3 buckets are encrypted"
+      Scope:
+        ComplianceResourceTypes:
+          - "AWS::S3::Bucket"
+      Source:
+        Owner: AWS
+        SourceIdentifier: "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
+
+  # SNS Topic for notifications
+  SnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: "S3BucketEncryptionAlert"
+
+  # Subscription for the SNS Topic (e.g., email notification)
+  SnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: "your-email@example.com" # Change this to your email
+      TopicArn: !Ref SnsTopic
+
+  # Lambda function for remediation
+  RemediationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: "RemediateS3Encryption"
+      Handler: "index.handler"
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/${RoleName}"
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+
+          def handler(event, context):
+              s3 = boto3.client('s3')
+              bucket_name = event['detail']['resourceId']
+
+              # Enable default encryption for the bucket
+              s3.put_bucket_encryption(
+                  Bucket=bucket_name,
+                  ServerSideEncryptionConfiguration={
+                      'Rules': [{
+                          'ApplyServerSideEncryptionByDefault': {
+                              'SSEAlgorithm': 'AES256'
+                          }
+                      }]
+                  }
+              )
+              print(f"Encryption enabled for bucket: {bucket_name}")
+
+      Runtime: python3.8
+      Timeout: 60
+
+  # CloudWatch Events Rule to trigger Lambda for non-compliance
+  CloudWatchEventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - "aws.config"
+        detail-type:
+          - "Config Rules Compliance Change"
+        detail:
+          complianceType:
+            - "NON_COMPLIANT"
+          ruleName:
+            - !Ref S3BucketEncryptionConfigRule
+      Targets:
+        - Arn: !GetAtt RemediationLambda.Arn
+          Id: "RemediateS3BucketEncryption"
+
+  # Permission for CloudWatch Events to invoke Lambda
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref RemediationLambda
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt CloudWatchEventsRule.Arn
+
+Outputs:
+  ConfigRecorderARN:
+    Value: !Ref ConfigRecorder
+    Description: ARN of the AWS Config Recorder
+  ConfigRuleName:
+    Value: !Ref S3BucketEncryptionConfigRule
+    Description: Name of the AWS Config Rule
+
+# Explanation of the Components
+# 1.Configuration Recorder: Records configuration changes and compliance status for all resources.
+
+# 2.Delivery Channel: Sends AWS Config data to an S3 bucket.
+
+# 3.AWS Config Rule:
+
+# Name: s3-bucket-encrypted
+# Purpose: Ensures all S3 buckets have server-side encryption enabled.
+# Scope: Applies to all S3 buckets in the account.
+# Source Identifier: Uses the AWS-managed rule identifier for checking S3 bucket encryption.
+# 4.SNS Topic:
+
+# Used to send notifications when non-compliance is detected.
+# Subscription sends email notifications to specified endpoints.
+# 5.Remediation Lambda Function:
+
+# Automatically enables server-side encryption for any non-compliant S3 bucket.
+# It’s triggered by a CloudWatch Events Rule when a non-compliance is detected.
+# 6.CloudWatch Events Rule:
+
+# Listens for compliance changes from AWS Config.
+# Triggers the Lambda function if the rule is marked as NON_COMPLIANT.
+# 7.Lambda Permission: Grants the necessary permissions for the CloudWatch Events Rule to invoke the Lambda function.
+
+

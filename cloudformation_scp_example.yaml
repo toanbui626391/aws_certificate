@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create and attach a Service Control Policy (SCP) to an Organizational Unit (OU)
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: The ID of your AWS Organization
+  OUName:
+    Type: String
+    Description: The name of the Organizational Unit (OU) to which the SCP will be applied
+  SCPName:
+    Type: String
+    Default: DenyS3Access
+    Description: The name for the SCP to be created
+  DenyS3Description:
+    Type: String
+    Default: "Deny all S3 actions in the attached OU."
+    Description: A description for the SCP
+  
+Resources:
+  # Create an Organizational Unit if it doesn't already exist
+  MyOU:
+    Type: AWS::Organizations::OrganizationalUnit
+    Properties:
+      ParentId: !Ref OrganizationId
+      Name: !Ref OUName
+
+  # Create the Service Control Policy (SCP) to deny all S3 actions
+  DenyS3Policy:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Content: 
+        Fn::Sub: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "DenyS3Actions",
+                "Effect": "Deny",
+                "Action": "s3:*",
+                "Resource": "*"
+              }
+            ]
+          }
+      Name: !Ref SCPName
+      Description: !Ref DenyS3Description
+      Type: SERVICE_CONTROL_POLICY
+
+  # Attach the SCP to the Organizational Unit (OU)
+  AttachSCPToOU:
+    Type: AWS::Organizations::PolicyAttachment
+    Properties: 
+      PolicyId: !Ref DenyS3Policy
+      TargetId: !Ref MyOU
+
+Outputs:
+  SCPArn:
+    Description: The ARN of the newly created SCP
+    Value: !GetAtt DenyS3Policy.Arn
+
+  OUId:
+    Description: The ID of the Organizational Unit (OU)
+    Value: !Ref MyOU
