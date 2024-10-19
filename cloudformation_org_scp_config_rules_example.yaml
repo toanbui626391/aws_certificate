@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create a landing zone with AWS Organizations and AWS Config rules
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: The ID of your AWS Organization
+  RootOUName:
+    Type: String
+    Default: RootOU
+    Description: Name for the root Organizational Unit
+  SecurityOUName:
+    Type: String
+    Default: SecurityOU
+    Description: Name for the Security OU
+  DevelopmentOUName:
+    Type: String
+    Default: DevelopmentOU
+    Description: Name for the Development OU
+  SCPName:
+    Type: String
+    Default: DenyCertainServices
+    Description: Name for the SCP to be created
+  SCPDescription:
+    Type: String
+    Default: "Deny certain services to ensure compliance"
+    Description: Description of the SCP
+  ConfigBucketName:
+    Type: String
+    Description: The name of the S3 bucket to store AWS Config data
+
+Resources:
+  # Create the root Organizational Unit (OU)
+  RootOU:
+    Type: AWS::Organizations::OrganizationalUnit
+    Properties:
+      ParentId: !Ref OrganizationId
+      Name: !Ref RootOUName
+
+  # Create Security Organizational Unit (OU)
+  SecurityOU:
+    Type: AWS::Organizations::OrganizationalUnit
+    Properties:
+      ParentId: !GetAtt RootOU.Id
+      Name: !Ref SecurityOUName
+
+  # Create Development Organizational Unit (OU)
+  DevelopmentOU:
+    Type: AWS::Organizations::OrganizationalUnit
+    Properties:
+      ParentId: !GetAtt RootOU.Id
+      Name: !Ref DevelopmentOUName
+
+  # Create SCP to deny certain services (for example, deny access to specific regions)
+  DenySCP:
+    Type: AWS::Organizations::Policy
+    Properties:
+      Name: !Ref SCPName
+      Description: !Ref SCPDescription
+      Type: SERVICE_CONTROL_POLICY
+      Content: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyCertainServices",
+              "Effect": "Deny",
+              "Action": [
+                "s3:*",
+                "ec2:*"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+
+  # Attach the SCP to the Security OU
+  AttachSCPToSecurityOU:
+    Type: AWS::Organizations::PolicyAttachment
+    Properties:
+      PolicyId: !Ref DenySCP
+      TargetId: !Ref SecurityOU
+
+  # Attach the SCP to the Development OU
+  AttachSCPToDevelopmentOU:
+    Type: AWS::Organizations::PolicyAttachment
+    Properties:
+      PolicyId: !Ref DenySCP
+      TargetId: !Ref DevelopmentOU
+
+  # Create AWS Config resources for centralized compliance monitoring
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      S3BucketName: !Ref ConfigBucketName
+
+  # AWS Config Rule to check whether EC2 instances are of a specific instance type (compliance check)
+  ConfigRule1:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: "required-instance-type"
+      Description: "Ensure EC2 instances are of a specific instance type"
+      Scope:
+        ComplianceResourceTypes:
+          - "AWS::EC2::Instance"
+      Source:
+        Owner: AWS
+        SourceIdentifier: "EC2_INSTANCE_TYPE"
+
+  # AWS Config Rule to check whether S3 buckets are encrypted
+  ConfigRule2:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: "s3-bucket-encrypted"
+      Description: "Ensure all S3 buckets are encrypted"
+      Scope:
+        ComplianceResourceTypes:
+          - "AWS::S3::Bucket"
+      Source:
+        Owner: AWS
+        SourceIdentifier: "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
+
+Outputs:
+  SecurityOUId:
+    Description: The ID of the Security OU
+    Value: !Ref SecurityOU
+
+  DevelopmentOUId:
+    Description: The ID of the Development OU
+    Value: !Ref DevelopmentOU
+
+"""
+Explanation:
+ConfigRecorder: AWS Config captures configuration changes to your resources and records them in a centralized S3 bucket.
+ConfigDeliveryChannel: Specifies where the configuration snapshots and compliance data will be stored (e.g., in an S3 bucket).
+ConfigRule1: A rule to ensure that EC2 instances are of a specific instance type (useful for ensuring standardization across EC2 instances).
+ConfigRule2: Ensures that all S3 buckets are encrypted using server-side encryption.
+ConfigRule1 and ConfigRule2 in the original CloudFormation example apply only to the current AWS account where the stack is deployed.
+"""

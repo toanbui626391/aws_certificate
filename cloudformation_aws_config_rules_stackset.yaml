@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation StackSet template to apply AWS Config Rules across accounts in an OU
+
+Parameters:
+  ConfigBucketName:
+    Type: String
+    Description: The name of the S3 bucket to store AWS Config data
+  
+  OrganizationId:
+    Type: String
+    Description: The ID of the AWS Organization
+  
+  RoleName:
+    Type: String
+    Description: The IAM role used by AWS Config
+  
+Resources:
+  # Create AWS Config Configuration Recorder
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties: 
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/${RoleName}"
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  # AWS Config Delivery Channel to send data to S3 bucket
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties: 
+      S3BucketName: !Ref ConfigBucketName
+
+  # AWS Config Rule to check whether EC2 instances are using a specific instance type
+  ConfigRule1:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: "required-instance-type"
+      Description: "Ensure EC2 instances are of a specific instance type"
+      Scope:
+        ComplianceResourceTypes:
+          - "AWS::EC2::Instance"
+      Source:
+        Owner: AWS
+        SourceIdentifier: "EC2_INSTANCE_TYPE"
+
+  # AWS Config Rule to check whether S3 buckets are encrypted
+  ConfigRule2:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: "s3-bucket-encrypted"
+      Description: "Ensure all S3 buckets are encrypted"
+      Scope:
+        ComplianceResourceTypes:
+          - "AWS::S3::Bucket"
+      Source:
+        Owner: AWS
+        SourceIdentifier: "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
+
+# aws cloudformation create-stack-set \
+#   --stack-set-name my-config-rules-stackset \
+#   --template-body file://config-rules-template.yaml \
+#   --parameters ParameterKey=ConfigBucketName,ParameterValue=my-config-bucket \
+#                ParameterKey=RoleName,ParameterValue=AWSConfigRole
+

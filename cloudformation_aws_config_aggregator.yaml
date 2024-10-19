@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Config Aggregator to collect compliance data from accounts in an OU
+
+Parameters:
+  OrganizationId:
+    Type: String
+    Description: The ID of the AWS Organization
+  
+  OUId:
+    Type: String
+    Description: The ID of the Organizational Unit to aggregate data from
+  
+Resources:
+  ConfigAggregator:
+    Type: AWS::Config::ConfigurationAggregator
+    Properties:
+      ConfigurationAggregatorName: "MyOrganizationAggregator"
+      OrganizationAggregationSource:
+        RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/service-role/AWSConfigRole"
+        AwsRegions:
+          - "us-east-1"
+        AllAwsRegions: true
+        OrganizationSource:
+          OrganizationId: !Ref OrganizationId
+          OrganizationalUnitIds:
+            - !Ref OUId
+
+# aws cloudformation create-stack \
+#   --stack-name config-aggregator-stack \
+#   --template-body file://config-aggregator-template.yaml \
+#   --parameters ParameterKey=OrganizationId,ParameterValue=o-1234567890 \
+#                ParameterKey=OUId,ParameterValue=ou-1234-5678

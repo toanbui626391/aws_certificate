@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Enforce S3 bucket encryption with multi-account deployment using AWS Config and SSM Automation.
+
+Resources:
+  # AWS Config Configuration Recorder
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      RoleARN: !GetAtt ConfigRole.Arn
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+
+  # AWS Config Delivery Channel
+  DeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      S3BucketName: !Ref ConfigBucket
+
+  # S3 Bucket for AWS Config Logs
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "aws-config-logs-${AWS::AccountId}"
+
+  # IAM Role for AWS Config in each account
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: config.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AWSConfigRolePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetBucketAcl"
+                Resource: !Sub "arn:aws:s3:::${ConfigBucket}/*"
+
+  # AWS Config Rule to Check S3 Encryption
+  S3BucketEncryptionRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: "s3-bucket-encryption-enabled"
+      Scope:
+        ComplianceResourceTypes:
+          - "AWS::S3::Bucket"
+      Source:
+        Owner: AWS
+        SourceIdentifier: "S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED"
+  
+  # SNS Topic for Notification Across Accounts
+  SnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: "S3EncryptionViolationAlert-${AWS::AccountId}"
+
+  # SNS Subscription for Each Account
+  SnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: "your-email@example.com"
+      TopicArn: !Ref SnsTopic
+
+  # SSM Automation Document for Remediation
+  S3EncryptionRemediationSSM:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Automation
+      Content:
+        schemaVersion: '0.3'
+        description: "Automatically enable encryption on non-compliant S3 buckets."
+        mainSteps:
+          - name: EnableS3Encryption
+            action: aws:executeAwsApi
+            inputs:
+              Service: s3
+              Api: PutBucketEncryption
+              Bucket: "{{ BucketName }}"
+              ServerSideEncryptionConfiguration:
+                Rules:
+                  - ApplyServerSideEncryptionByDefault:
+                      SSEAlgorithm: AES256
+            outputs:
+              - Name: BucketName
+                Type: String
+                Selector: $.BucketName
+
+  # SSM Role for Automation to Run in Each Account
+  SsmAutomationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SsmAutomationPolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:PutEncryptionConfiguration"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "ssm:StartAutomationExecution"
+                  - "ssm:DescribeAutomationExecutions"
+                Resource: "*"
+  
+  # CloudWatch Rule to Trigger SSM Automation Remediation
+  CloudWatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - "aws.config"
+        detail-type:
+          - "Config Rules Compliance Change"
+        detail:
+          complianceType:
+            - "NON_COMPLIANT"
+          ruleName:
+            - !Ref S3BucketEncryptionRule
+      Targets:
+        - Arn: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation:document/${S3EncryptionRemediationSSM}"
+          RoleArn: !GetAtt SsmAutomationRole.Arn
+          Id: "RemediateS3Encryption"
+
+  # Permission for CloudWatch to invoke SSM Automation
+  SsmAutomationPermission:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: "AllowInvokeSSM"
+      Roles:
+        - Ref: SsmAutomationRole
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: 
+              - "ssm:StartAutomationExecution"
+            Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:automation:document/${S3EncryptionRemediationSSM}"
