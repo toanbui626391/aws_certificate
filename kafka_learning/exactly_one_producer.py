@@ -31,7 +31,7 @@ try:
             # Produce messages
             producer.produce('my_topic', key=str(i), value=f'Message {i}', callback=delivery_report)
             # Flush the producer to ensure messages are sent
-            # can flush in batch and still archive exactly one delivery
+            # can flush in batch and still archive exactly one delivery 
             producer.flush()
             print(f"Produced: Message {i}")
 

@@ -73,3 +73,4 @@ finally:
     # Cleanup
     consumer.close()
     producer.flush()
+                    
