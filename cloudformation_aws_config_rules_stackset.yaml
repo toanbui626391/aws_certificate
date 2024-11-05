@@ -62,3 +62,4 @@ Resources:
 #   --parameters ParameterKey=ConfigBucketName,ParameterValue=my-config-bucket \
 #                ParameterKey=RoleName,ParameterValue=AWSConfigRole
 
+
